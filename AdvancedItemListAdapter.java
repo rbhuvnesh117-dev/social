@@ -137,6 +137,12 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
     // These helpers allow your fragment to wire up auto-play/stop.
     private RecyclerView attachedRecyclerView = null;
     private final int autoPlayVisiblePercent = 65; // percent visible required to auto-play
+    // prepare early when X% visible (start prepare but don't play)
+    private final int prepareVisiblePercent = 30;
+
+    // Cache config: initialize lazily in constructor or an init method
+    private com.google.android.exoplayer2.upstream.cache.SimpleCache simpleCache = null;
+    private com.google.android.exoplayer2.upstream.cache.CacheDataSource.Factory cacheDataSourceFactory = null;
     private boolean autoPlayEnabled = true;
 
     // Attach the RecyclerView for auto-play tracking
@@ -217,10 +223,46 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
             if (candidate == null) continue; // Defensive: skip if neither view exists
 
             int visible = getVisibleHeightPercent(candidate, attachedRecyclerView);
+
             if (visible > bestVisible) {
                 bestVisible = visible;
                 bestPos = i;
             }
+
+// If a row is partially visible and we haven't prepared it yet, prepare it early to hide buffering
+            try {
+                if (visible >= prepareVisiblePercent && sharedPosition != i) {
+                    RecyclerView.ViewHolder prepVh = attachedRecyclerView.findViewHolderForAdapterPosition(i);
+                    if (prepVh instanceof ViewHolder) {
+                        final ViewHolder prepHolder = (ViewHolder) prepVh;
+                        final Item prepItem = items.get(i);
+                        // Prepare the shared player with this item's media but don't start playback yet
+                        if (sharedPlayer != null) {
+                            com.google.android.exoplayer2.MediaItem mediaItem =
+                                    com.google.android.exoplayer2.MediaItem.fromUri(android.net.Uri.parse(prepItem.getVideoUrl()));
+                            sharedHolder = prepHolder;
+                            sharedPosition = i;
+                            // choose data source factory: prefer cacheDataSourceFactory if available, otherwise default network factory
+                            com.google.android.exoplayer2.upstream.DataSource.Factory dataSourceFactory;
+                            if (cacheDataSourceFactory != null) {
+                                dataSourceFactory = cacheDataSourceFactory;
+                            } else {
+                                dataSourceFactory = new com.google.android.exoplayer2.upstream.DefaultDataSource.Factory(context);
+                            }
+
+// create a MediaSource (progressive mp4/http)
+                            com.google.android.exoplayer2.source.MediaSource mediaSource =
+                                    new com.google.android.exoplayer2.source.ProgressiveMediaSource.Factory(dataSourceFactory)
+                                            .createMediaSource(mediaItem);
+
+                            sharedPlayer.setMediaSource(mediaSource);
+                            sharedPlayer.prepare();
+                            sharedPlayer.setPlayWhenReady(false);
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+
         }
 
         if (bestPos != -1 && bestVisible >= autoPlayVisiblePercent) {
@@ -299,14 +341,23 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
                         .build();
                 sharedTrackSelector.setParameters(params);
 
-                sharedPlayer = new com.google.android.exoplayer2.ExoPlayer.Builder(
-                        context,
-                        new DefaultRenderersFactory(context).setEnableDecoderFallback(true)
-                )
+                DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
+
+                com.google.android.exoplayer2.MediaSourceFactory mediaSourceFactory = null;
+                if (cacheDataSourceFactory != null) {
+                    mediaSourceFactory = new com.google.android.exoplayer2.source.DefaultMediaSourceFactory(cacheDataSourceFactory);
+                } else {
+                    mediaSourceFactory = new com.google.android.exoplayer2.source.DefaultMediaSourceFactory(
+                            new com.google.android.exoplayer2.upstream.DefaultDataSource.Factory(context));
+                }
+
+                DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
+
+                sharedPlayer = new com.google.android.exoplayer2.ExoPlayer.Builder(context, renderersFactory)
                         .setTrackSelector(sharedTrackSelector)
                         .setLoadControl(new DefaultLoadControl.Builder()
-                                .setBufferDurationsMs(15000, 30000, 1500, 2500)
-                                .setPrioritizeTimeOverSizeThresholds(true)
+                                .setBufferDurationsMs(5_000, 15_000, 500, 500)
+                                .setPrioritizeTimeOverSizeThresholds(false)
                                 .build())
                         .build();
 
@@ -849,6 +900,30 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
         }
 
         mTagSelectingTextview = new TagSelectingTextview();
+// initialize simple cache + cache datasource factory (best-effort; kept small)
+        try {
+            java.io.File cacheFolder = new java.io.File(context.getCacheDir(), "video_cache");
+            long maxCacheSize = 50L * 1024L * 1024L; // 50 MB, tune as needed
+            com.google.android.exoplayer2.upstream.cache.LeastRecentlyUsedCacheEvictor evictor =
+                    new com.google.android.exoplayer2.upstream.cache.LeastRecentlyUsedCacheEvictor(maxCacheSize);
+            com.google.android.exoplayer2.database.ExoDatabaseProvider dbProvider =
+                    new com.google.android.exoplayer2.database.ExoDatabaseProvider(context);
+            simpleCache = new com.google.android.exoplayer2.upstream.cache.SimpleCache(cacheFolder, evictor, dbProvider);
+
+            com.google.android.exoplayer2.upstream.DefaultHttpDataSource.Factory httpFactory =
+                    new com.google.android.exoplayer2.upstream.DefaultHttpDataSource.Factory()
+                            .setAllowCrossProtocolRedirects(true);
+
+            cacheDataSourceFactory = new com.google.android.exoplayer2.upstream.cache.CacheDataSource.Factory()
+                    .setCache(simpleCache)
+                    .setUpstreamDataSourceFactory(httpFactory)
+                    .setFlags(com.google.android.exoplayer2.upstream.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+
+        } catch (Throwable ignore) {
+            // if SimpleCache init fails, fall back to null and player will use network directly
+            simpleCache = null;
+            cacheDataSourceFactory = null;
+        }
     }
 
     public AdvancedItemListAdapter(Context ctx, List<Item> items, int pageId) {
@@ -863,6 +938,30 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
         }
 
         mTagSelectingTextview = new TagSelectingTextview();
+// initialize simple cache + cache datasource factory (best-effort; kept small)
+        try {
+            java.io.File cacheFolder = new java.io.File(context.getCacheDir(), "video_cache");
+            long maxCacheSize = 50L * 1024L * 1024L; // 50 MB, tune as needed
+            com.google.android.exoplayer2.upstream.cache.LeastRecentlyUsedCacheEvictor evictor =
+                    new com.google.android.exoplayer2.upstream.cache.LeastRecentlyUsedCacheEvictor(maxCacheSize);
+            com.google.android.exoplayer2.database.ExoDatabaseProvider dbProvider =
+                    new com.google.android.exoplayer2.database.ExoDatabaseProvider(context);
+            simpleCache = new com.google.android.exoplayer2.upstream.cache.SimpleCache(cacheFolder, evictor, dbProvider);
+
+            com.google.android.exoplayer2.upstream.DefaultHttpDataSource.Factory httpFactory =
+                    new com.google.android.exoplayer2.upstream.DefaultHttpDataSource.Factory()
+                            .setAllowCrossProtocolRedirects(true);
+
+            cacheDataSourceFactory = new com.google.android.exoplayer2.upstream.cache.CacheDataSource.Factory()
+                    .setCache(simpleCache)
+                    .setUpstreamDataSourceFactory(httpFactory)
+                    .setFlags(com.google.android.exoplayer2.upstream.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+
+        } catch (Throwable ignore) {
+            // if SimpleCache init fails, fall back to null and player will use network directly
+            simpleCache = null;
+            cacheDataSourceFactory = null;
+        }
     }
 
     @NonNull
@@ -1011,7 +1110,17 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
                 holder.btnMute.setVisibility(View.VISIBLE);
 
                 com.google.android.exoplayer2.MediaItem mediaItem = com.google.android.exoplayer2.MediaItem.fromUri(p.getVideoUrl());
-                exoPlayer.setMediaItem(mediaItem);
+                // choose data source factory for row player
+                com.google.android.exoplayer2.upstream.DataSource.Factory dataSourceFactory;
+                if (cacheDataSourceFactory != null) {
+                    dataSourceFactory = cacheDataSourceFactory;
+                } else {
+                    dataSourceFactory = new com.google.android.exoplayer2.upstream.DefaultDataSource.Factory(context);
+                }
+                com.google.android.exoplayer2.source.MediaSource mediaSourceRow =
+                        new com.google.android.exoplayer2.source.ProgressiveMediaSource.Factory(dataSourceFactory)
+                                .createMediaSource(mediaItem);
+                exoPlayer.setMediaSource(mediaSourceRow);
                 exoPlayer.prepare();
                 exoPlayer.setPlayWhenReady(true);
 
