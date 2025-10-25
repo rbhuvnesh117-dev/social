@@ -187,7 +187,7 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
     }
 
     // Finds the most visible video and plays it
-    private void autoPlayVideoIfNeeded() {
+    public void autoPlayVideoIfNeeded() {
         if (attachedRecyclerView == null) return;
         RecyclerView.LayoutManager lm = attachedRecyclerView.getLayoutManager();
         if (!(lm instanceof GridLayoutManager)) return;
@@ -465,9 +465,21 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
     }
 
     // Optional: helpers for fragment lifecycle
+    // replace existing pauseCurrent()
     public void pauseCurrent() {
-        if (currentPlayer != null) currentPlayer.setPlayWhenReady(false);
+        try {
+            if (currentPlayer != null) {
+                currentPlayer.setPlayWhenReady(false);
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            if (sharedPlayer != null) {
+                sharedPlayer.setPlayWhenReady(false);
+            }
+        } catch (Throwable ignored) {}
     }
+
     public void resumeCurrentIfVisible() {
         if (currentPlayer != null && currentPlayerViewHolder != null) {
             currentPlayer.setPlayWhenReady(true);
@@ -3232,4 +3244,50 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
         // Fallback to full bind
         onBindViewHolder(holder, position);
     }
+
+    // add this new helper
+    public void pauseAll() {
+        // pause + optionally release per-row player
+        try {
+            if (currentPlayer != null) {
+                currentPlayer.setPlayWhenReady(false);
+                try { currentPlayer.stop(); } catch (Throwable ignored) {}
+                try { currentPlayer.release(); } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {}
+
+        if (currentPlayerViewHolder != null) {
+            try { currentPlayerViewHolder.releasePlayer(); } catch (Throwable ignored) {}
+            currentPlayerViewHolder = null;
+        }
+        currentPlayer = null;
+        currentPlayingPosition = -1;
+
+        // stop & release shared autoplay player
+        try {
+            if (sharedPlayer != null) {
+                sharedPlayer.setPlayWhenReady(false);
+                try { sharedPlayer.stop(); } catch (Throwable ignored) {}
+                try { sharedPlayer.release(); } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {}
+
+        if (sharedHolder != null) {
+            try { if (sharedHolder.playerView != null) sharedHolder.playerView.setPlayer(null); } catch (Throwable ignored) {}
+            sharedHolder = null;
+        }
+        sharedPlayer = null;
+        sharedTrackSelector = null;
+        sharedPosition = RecyclerView.NO_POSITION;
+    }
+
+
+    // add this to expose autoplay check from the adapter
+    public void resumeAutoplayIfVisible() {
+        // autoPlayVideoIfNeeded() is private — expose it by calling it here
+        try {
+            autoPlayVideoIfNeeded();
+        } catch (Throwable ignored) {}
+    }
+
 }
