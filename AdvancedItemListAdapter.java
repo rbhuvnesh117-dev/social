@@ -343,15 +343,7 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
 
                 DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
 
-                com.google.android.exoplayer2.MediaSourceFactory mediaSourceFactory = null;
-                if (cacheDataSourceFactory != null) {
-                    mediaSourceFactory = new com.google.android.exoplayer2.source.DefaultMediaSourceFactory(cacheDataSourceFactory);
-                } else {
-                    mediaSourceFactory = new com.google.android.exoplayer2.source.DefaultMediaSourceFactory(
-                            new com.google.android.exoplayer2.upstream.DefaultDataSource.Factory(context));
-                }
 
-                DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
 
                 sharedPlayer = new com.google.android.exoplayer2.ExoPlayer.Builder(context, renderersFactory)
                         .setTrackSelector(sharedTrackSelector)
