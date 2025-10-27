@@ -3268,6 +3268,33 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
 
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position, @NonNull List<Object> payloads) {
+
+// inside onBindViewHolder(holder, position, payloads) - add before handling "reactions"
+        if (payloads != null && !payloads.isEmpty()) {
+            for (Object payload : payloads) {
+                if (payload instanceof String) {
+                    String key = (String) payload;
+                    if (key.equals("readmore")) {
+                        // Update only the post text to expanded content (no full rebinding)
+                        Item p = items.get(position);
+                        CharSequence processed;
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            processed = mTagSelectingTextview.addClickablePart(
+                                    Html.fromHtml(p.getPost(), Html.FROM_HTML_MODE_LEGACY).toString(),
+                                    this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+                        } else {
+                            processed = mTagSelectingTextview.addClickablePart(
+                                    Html.fromHtml(p.getPost()).toString(),
+                                    this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+                        }
+                        holder.mItemDescription.setText(processed, TextView.BufferType.SPANNABLE);
+                        holder.mItemDescription.setMovementMethod(LinkMovementMethod.getInstance());
+                        return; // done - avoid full bind that restarts video/image
+                    }
+                    // existing "reactions" handling continues below...
+                }
+            }
+        }
         if (payloads != null && !payloads.isEmpty()) {
             for (Object payload : payloads) {
                 if (payload instanceof String && ((String) payload).equals("reactions")) {
@@ -3463,31 +3490,47 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
             public void onClick(@NonNull View widget) {
                 expandedPosts.add(p.getId());
                 try {
-                    notifyItemChanged(position);
+                    // Partial update so we don't re-bind the whole row (avoids restarting video/image)
+                    notifyItemChanged(position, "readmore");
                 } catch (Exception e) {
                     // Fallback: set full text directly if notifyItemChanged fails for any reason
                     CharSequence processed;
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml, Html.FROM_HTML_MODE_LEGACY).toString(), AdvancedItemListAdapter.this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+                        processed = mTagSelectingTextview.addClickablePart(
+                                Html.fromHtml(textHtml, Html.FROM_HTML_MODE_LEGACY).toString(),
+                                AdvancedItemListAdapter.this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
                     } else {
-                        processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml).toString(), AdvancedItemListAdapter.this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+                        processed = mTagSelectingTextview.addClickablePart(
+                                Html.fromHtml(textHtml).toString(),
+                                AdvancedItemListAdapter.this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
                     }
                     tv.setText(processed, TextView.BufferType.SPANNABLE);
                     tv.setMovementMethod(LinkMovementMethod.getInstance());
                 }
+            } catch (Exception e) {
+                // Fallback: set full text directly if notifyItemChanged fails for any reason
+                CharSequence processed;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml, Html.FROM_HTML_MODE_LEGACY).toString(), AdvancedItemListAdapter.this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+                } else {
+                    processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml).toString(), AdvancedItemListAdapter.this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+                }
+                tv.setText(processed, TextView.BufferType.SPANNABLE);
+                tv.setMovementMethod(LinkMovementMethod.getInstance());
             }
+        }
 
-            @Override
-            public void updateDrawState(@NonNull TextPaint ds) {
-                super.updateDrawState(ds);
-                ds.setColor(Color.parseColor(HASHTAGS_COLOR)); // reuse hashtag color
-                ds.setUnderlineText(false);
-            }
-        };
+        @Override
+        public void updateDrawState(@NonNull TextPaint ds) {
+            super.updateDrawState(ds);
+            ds.setColor(Color.parseColor(HASHTAGS_COLOR)); // reuse hashtag color
+            ds.setUnderlineText(false);
+        }
+    };
 
         sb.setSpan(cs, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
 
         tv.setText(sb, TextView.BufferType.SPANNABLE);
         tv.setMovementMethod(LinkMovementMethod.getInstance());
-    }
+}
 }
