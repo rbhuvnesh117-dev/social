@@ -122,6 +122,12 @@ import finix.social.finixapp.util.TagSelectingTextview;
 import finix.social.finixapp.view.ResizableImageView;
 
 
+import android.text.style.ClickableSpan;
+import android.text.TextPaint;
+import android.text.TextUtils;
+import java.util.HashSet;
+import java.util.Set;
+
 public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemListAdapter.ViewHolder> implements Constants, TagClick {
     // default to true to keep previous behaviour (autoplay starts muted)
     private boolean autoplayMuted = true;
@@ -608,6 +614,10 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
     private Context context;
 
     TagSelectingTextview mTagSelectingTextview;
+
+    // Track expanded posts so recycled views keep correct state
+    private Set<Long> expandedPosts = new HashSet<>();
+    private static final int POST_TRUNCATE_CHARS = 150; // adjust as needed
 
     public static int hashTagHyperLinkDisabled = 0;
 
@@ -1824,38 +1834,23 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
             if (p.getPost().length() != 0) {
 
                 holder.mItemDescription.setVisibility(View.VISIBLE);
-                holder.mItemDescription.setText(p.getPost().replaceAll("<br>", "\n"));
-
                 holder.mItemDescription.setMovementMethod(LinkMovementMethod.getInstance());
 
                 String textHtml = p.getPost();
-
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-
-                    holder.mItemDescription.setText(mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml, Html.FROM_HTML_MODE_LEGACY).toString(), this, hashTagHyperLinkDisabled, HASHTAGS_COLOR), TextView.BufferType.SPANNABLE);
-
-                } else {
-
-                    holder.mItemDescription.setText(mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml).toString(), this, hashTagHyperLinkDisabled, HASHTAGS_COLOR), TextView.BufferType.SPANNABLE);
-                }
+                setPostTextWithReadMore(holder.mItemDescription, textHtml, p, position);
 
                 holder.mItemDescription.setOnLongClickListener(new View.OnLongClickListener() {
-
                     @Override
                     public boolean onLongClick(View v) {
-
                         ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
                         ClipData clip = ClipData.newPlainText("msg", p.getPost().replaceAll("<br>", "\n"));
                         clipboard.setPrimaryClip(clip);
-
                         Toast.makeText(context, context.getString(R.string.msg_copied_to_clipboard), Toast.LENGTH_SHORT).show();
-
                         return false;
                     }
                 });
 
             } else {
-
                 holder.mItemDescription.setVisibility(View.GONE);
             }
 
@@ -3409,4 +3404,90 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
         } catch (Throwable ignored) {}
     }
 
+
+
+    private void setPostTextWithReadMore(final EmojiconTextView tv, final String textHtml, final Item p, final int position) {
+
+        final String plainText;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            plainText = Html.fromHtml(textHtml, Html.FROM_HTML_MODE_LEGACY).toString();
+        } else {
+            plainText = Html.fromHtml(textHtml).toString();
+        }
+
+        // If already expanded -> show full processed text
+        if (expandedPosts.contains(p.getId())) {
+            CharSequence processed;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml, Html.FROM_HTML_MODE_LEGACY).toString(), this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+            } else {
+                processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml).toString(), this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+            }
+            tv.setText(processed, TextView.BufferType.SPANNABLE);
+            tv.setMovementMethod(LinkMovementMethod.getInstance());
+            return;
+        }
+
+        // Short text -> show full processed text
+        if (plainText.length() <= POST_TRUNCATE_CHARS) {
+            CharSequence processed;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml, Html.FROM_HTML_MODE_LEGACY).toString(), this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+            } else {
+                processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml).toString(), this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+            }
+            tv.setText(processed, TextView.BufferType.SPANNABLE);
+            tv.setMovementMethod(LinkMovementMethod.getInstance());
+            return;
+        }
+
+        // Truncate and append clickable "Read more"
+        int cut = POST_TRUNCATE_CHARS;
+        String truncated = plainText.substring(0, cut).trim();
+        int lastSpace = truncated.lastIndexOf(' ');
+        if (lastSpace > 0) truncated = truncated.substring(0, lastSpace);
+
+        CharSequence processedTruncated = mTagSelectingTextview.addClickablePart(truncated, this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+
+        SpannableStringBuilder sb = new SpannableStringBuilder();
+        sb.append(processedTruncated);
+        sb.append("... ");
+
+        final String readMoreLabel = context.getString(R.string.label_read_more); // ensure this string exists
+        int start = sb.length();
+        sb.append(readMoreLabel);
+        int end = sb.length();
+
+        ClickableSpan cs = new ClickableSpan() {
+            @Override
+            public void onClick(@NonNull View widget) {
+                expandedPosts.add(p.getId());
+                try {
+                    notifyItemChanged(position);
+                } catch (Exception e) {
+                    // Fallback: set full text directly if notifyItemChanged fails for any reason
+                    CharSequence processed;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml, Html.FROM_HTML_MODE_LEGACY).toString(), AdvancedItemListAdapter.this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+                    } else {
+                        processed = mTagSelectingTextview.addClickablePart(Html.fromHtml(textHtml).toString(), AdvancedItemListAdapter.this, hashTagHyperLinkDisabled, HASHTAGS_COLOR);
+                    }
+                    tv.setText(processed, TextView.BufferType.SPANNABLE);
+                    tv.setMovementMethod(LinkMovementMethod.getInstance());
+                }
+            }
+
+            @Override
+            public void updateDrawState(@NonNull TextPaint ds) {
+                super.updateDrawState(ds);
+                ds.setColor(Color.parseColor(HASHTAGS_COLOR)); // reuse hashtag color
+                ds.setUnderlineText(false);
+            }
+        };
+
+        sb.setSpan(cs, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        tv.setText(sb, TextView.BufferType.SPANNABLE);
+        tv.setMovementMethod(LinkMovementMethod.getInstance());
+    }
 }
