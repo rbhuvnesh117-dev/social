@@ -136,9 +136,11 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
 
     // These helpers allow your fragment to wire up auto-play/stop.
     private RecyclerView attachedRecyclerView = null;
-    private final int autoPlayVisiblePercent = 65; // percent visible required to auto-play
+    // start auto-play as soon as a small portion is visible (instant)
+    private final int autoPlayVisiblePercent = 1; // percent visible required to auto-play
     // prepare early when X% visible (start prepare but don't play)
-    private final int prepareVisiblePercent = 30;
+    // prepare early when tiny portion visible (prepare but don't start)
+    private final int prepareVisiblePercent = 1;
 
     // Cache config: initialize lazily in constructor or an init method
     private com.google.android.exoplayer2.upstream.cache.SimpleCache simpleCache = null;
@@ -190,6 +192,14 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
                 }
             }
         });
+
+// run an initial autoplay check after layout so visible videos start immediately
+        if (recyclerView != null) {
+            recyclerView.post(() -> {
+                try { autoPlayVideoIfNeeded(); } catch (Throwable ignored) {}
+            });
+        }
+
     }
 
     // Finds the most visible video and plays it
@@ -1427,6 +1437,14 @@ public class AdvancedItemListAdapter extends RecyclerView.Adapter<AdvancedItemLi
 
             holder.mAdCard.setVisibility(View.VISIBLE);
         }
+
+// ensure newly-bound rows get considered for autoplay immediately
+        if (attachedRecyclerView != null) {
+            attachedRecyclerView.post(() -> {
+                try { autoPlayVideoIfNeeded(); } catch (Throwable ignored) {}
+            });
+        }
+
     }
 
 
